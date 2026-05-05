@@ -2,16 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-# ============ СВОЙСТВА МАТЕРИАЛОВ ============
-rho_C = 2250; cp_C = 712; lambda_C = 1.59; h_C = 60e6
-rho_SiO2 = 1520; cp_SiO2 = 835; lambda_SiO2 = 0.3; h_SiO2 = 14.32e6
-rho_H2O = 998.2; cp_H2O = 4182; lambda_H2O = 0.56; h_H2O = 2.4444e6
-T_boil = 373.15
+# ============ СВОЙСТВА МАТЕРИАЛОВ СРЕДЫ ============
+rho_C = 2250; cp_C = 712; lambda_C = 1.59
+rho_SiO2 = 1520; cp_SiO2 = 835; lambda_SiO2 = 0.3
+rho_H2O = 998.2; cp_H2O = 4182; lambda_H2O = 0.56
+
+# ============ СВОЙСТВА НАГРЕВАТЕЛЯ (МЕДЬ) ============
+rho_heater = 8900      # кг/м³
+cp_heater = 380        # Дж/(кг·К)
+lambda_heater = 400    # Вт/(м·К)
 
 materials = {
-    'C': {'rho': rho_C, 'cp': cp_C, 'lambda': lambda_C, 'h': h_C, 'name': 'Графит'},
-    'SiO2': {'rho': rho_SiO2, 'cp': cp_SiO2, 'lambda': lambda_SiO2, 'h': h_SiO2, 'name': 'Песок'},
-    'H2O': {'rho': rho_H2O, 'cp': cp_H2O, 'lambda': lambda_H2O, 'h': h_H2O, 'name': 'Вода'}
+    'C': {'rho': rho_C, 'cp': cp_C, 'lambda': lambda_C, 'name': 'Графит'},
+    'SiO2': {'rho': rho_SiO2, 'cp': cp_SiO2, 'lambda': lambda_SiO2, 'name': 'Песок'},
+    'H2O': {'rho': rho_H2O, 'cp': cp_H2O, 'lambda': lambda_H2O, 'name': 'Вода'}
 }
 
 # ============ ПАРАМЕТРЫ ЗАДАЧИ ============
@@ -20,29 +24,29 @@ mass_fractions = {'C': 0.4, 'SiO2': 0.5, 'H2O': 0.1}
 # Параметры прямоугольного нагревателя
 width_y = 0.3      # м
 width_z = 0.4      # м
-Q_heater = 1e6     # Вт/м³
+Q_heater = 5e7     # 50 МВт/м³
 
-# ============ ПАРАМЕТРЫ СЕТКИ (ПОДОБРАНЫ ДЛЯ УСТОЙЧИВОСТИ) ============
-total_time = 6000    # с
-square_side = 1.0    # м
-Ny, Nz = 61, 61      # точек по y и z
-Nt = 8000            # шагов по времени
+# ============ ПАРАМЕТРЫ СЕТКИ (t=600 с) ============
+total_time = 600    # 600 секунд (10 минут)
+square_side = 1.0   # м
+Ny, Nz = 61, 61
+Nt = 4000           # шагов по времени (dt = 0.15 с)
 
 dy = square_side / (Ny - 1)
 dz = square_side / (Nz - 1)
 dt = total_time / Nt
 
-print("=== ПРЯМОУГОЛЬНЫЙ НАГРЕВАТЕЛЬ В НЕОДНОРОДНОЙ СРЕДЕ ===")
-print(f"dy = {dy:.5f} м, dz = {dz:.5f} м")
+print("=== ПРЯМОУГОЛЬНЫЙ НАГРЕВАТЕЛЬ (замена материала) ===")
+print(f"Q_heater = {Q_heater/1e6:.0f} МВт/м³")
+print(f"total_time = {total_time} с")
 print(f"dt = {dt:.4f} с, Nt = {Nt}")
-print(f"Общее время: {total_time} с")
 
 # Проверка устойчивости
-alpha_max = max(lambda_C/(rho_C*cp_C), lambda_SiO2/(rho_SiO2*cp_SiO2), lambda_H2O/(rho_H2O*cp_H2O))
-stability = alpha_max * dt * (1/dy**2 + 1/dz**2)
-print(f"Число устойчивости: {stability:.4f} (должно быть ≤ 0.5)")
+alpha_heater = lambda_heater / (rho_heater * cp_heater)
+stability = alpha_heater * dt * (1/dy**2 + 1/dz**2)
+print(f"Число устойчивости для нагревателя: {stability:.4f} (должно быть ≤ 0.5)")
 
-# ============ РАСПРЕДЕЛЕНИЕ КОМПОНЕНТОВ ============
+# ============ РАСПРЕДЕЛЕНИЕ КОМПОНЕНТОВ СРЕДЫ ============
 order = ['C', 'SiO2', 'H2O']
 mix_factor = 1.0
 
@@ -91,25 +95,15 @@ def get_component_masks(Ny, Nz, order, mix_factor):
 
 component_masks = get_component_masks(Ny, Nz, order, mix_factor)
 
-# Поля свойств
+# ============ ИНИЦИАЛИЗАЦИЯ ПОЛЕЙ ============
 rho_map = np.zeros((Ny, Nz))
 cp_map = np.zeros((Ny, Nz))
 lambda_map = np.zeros((Ny, Nz))
-water_mass_fraction = np.zeros((Ny, Nz))
-has_water = np.zeros((Ny, Nz), dtype=bool)
 
 for i, comp in enumerate(order):
     rho_map[component_masks[i]] = materials[comp]['rho']
     cp_map[component_masks[i]] = materials[comp]['cp']
     lambda_map[component_masks[i]] = materials[comp]['lambda']
-    if comp == 'H2O':
-        water_mass_fraction[component_masks[i]] = mass_fractions['H2O']
-        has_water[component_masks[i]] = True
-
-epsilon = 1e-10
-rho_map[rho_map == 0] = materials[order[0]]['rho']
-cp_map[cp_map == 0] = materials[order[0]]['cp']
-lambda_map[lambda_map == 0] = materials[order[0]]['lambda']
 
 # ============ ПРЯМОУГОЛЬНЫЙ НАГРЕВАТЕЛЬ ============
 center_y = square_side / 2
@@ -121,13 +115,16 @@ Y, Z = np.meshgrid(y_coords, z_coords, indexing='ij')
 heater_mask = (Y >= center_y - width_y/2) & (Y <= center_y + width_y/2) & \
               (Z >= center_z - width_z/2) & (Z <= center_z + width_z/2)
 
+# ============ ЗАМЕНА МАТЕРИАЛА В ЗОНЕ НАГРЕВАТЕЛЯ ============
+rho_map[heater_mask] = rho_heater
+cp_map[heater_mask] = cp_heater
+lambda_map[heater_mask] = lambda_heater
+
 # ============ ПАРАМЕТРЫ РАСЧЕТА ============
+epsilon = 1e-10
 source_val = dt * Q_heater / (rho_map * cp_map + epsilon)
 coeff_y_map = lambda_map * dt / ((rho_map * cp_map + epsilon) * dy**2)
 coeff_z_map = lambda_map * dt / ((rho_map * cp_map + epsilon) * dz**2)
-
-evaporation_energy = np.zeros((Ny, Nz))
-water_evaporated = np.zeros((Ny, Nz), dtype=bool)
 
 T = np.zeros((Ny, Nz, Nt))
 T[:, :, 0] = 293.0
@@ -142,26 +139,7 @@ for j in range(0, Nt-1):
             q_source = source_val[iy, iz] if heater_mask[iy, iz] else 0
             diffusion = coeff_y_map[iy, iz] * (T[iy+1, iz, j] - 2*T[iy, iz, j] + T[iy-1, iz, j]) + \
                         coeff_z_map[iy, iz] * (T[iy, iz+1, j] - 2*T[iy, iz, j] + T[iy, iz-1, j])
-            delta_T = diffusion + q_source
-
-            if has_water[iy, iz] and not water_evaporated[iy, iz]:
-                if T[iy, iz, j] >= T_boil:
-                    energy_for_evap = delta_T * cp_map[iy, iz]
-                    water_mass = water_mass_fraction[iy, iz] * rho_map[iy, iz]
-                    energy_needed = h_H2O * water_mass
-                    evaporation_energy[iy, iz] += energy_for_evap * (rho_map[iy, iz] * cp_map[iy, iz])
-
-                    if evaporation_energy[iy, iz] >= energy_needed:
-                        water_evaporated[iy, iz] = True
-                        leftover = evaporation_energy[iy, iz] - energy_needed
-                        T[iy, iz, j+1] = T_boil + leftover / (rho_map[iy, iz] * cp_map[iy, iz])
-                        evaporation_energy[iy, iz] = 0
-                    else:
-                        T[iy, iz, j+1] = T_boil
-                else:
-                    T[iy, iz, j+1] = T[iy, iz, j] + delta_T
-            else:
-                T[iy, iz, j+1] = T[iy, iz, j] + delta_T
+            T[iy, iz, j+1] = T[iy, iz, j] + diffusion + q_source
 
     T[0, :, j+1] = T[1, :, j+1]
     T[-1, :, j+1] = T[-2, :, j+1]
@@ -175,9 +153,8 @@ for j in range(0, Nt-1):
     percent_now = (heated_area_now / total_area_outside) * 100 if total_area_outside > 0 else 0
     percent_heated_over_time.append(percent_now)
 
-    if (j+1) % 1000 == 0:
-        water_count = np.sum(~water_evaporated & has_water)
-        print(f"Шаг {j+1}/{Nt} | T_max = {np.max(T_current):.1f}K | Вода: {water_count} | Нагрето: {percent_now:.1f}%")
+    if (j+1) % 500 == 0:
+        print(f"Шаг {j+1}/{Nt} | T_max = {np.max(T_current):.1f}K | Нагрето: {percent_now:.1f}%")
 
 print("Расчет завершен!")
 
@@ -193,24 +170,25 @@ comp_labels = []
 for i, comp in enumerate(order):
     comp_display[component_masks[i]] = i + 1
     comp_labels.append(materials[comp]['name'])
+comp_display[heater_mask] = len(order) + 1
+comp_labels.append('Нагреватель (медь)')
 
 im1 = plt.imshow(comp_display.T, origin='lower', extent=[0, square_side, 0, square_side],
-                 aspect='equal', cmap='tab10', vmin=0.5, vmax=len(order)+0.5)
-cbar = plt.colorbar(im1, ticks=range(1, len(order)+1), label='Компонент')
+                 aspect='equal', cmap='tab10', vmin=0.5, vmax=len(order)+1.5)
+cbar = plt.colorbar(im1, ticks=range(1, len(order)+2), label='Компонент')
 cbar.set_ticklabels(comp_labels)
 plt.xlabel('y, м')
 plt.ylabel('z, м')
-plt.title(f'Распределение компонентов (mix={mix_factor})')
+plt.title(f'Распределение компонентов (нагреватель заменяет материал)')
 plt.show()
 
-# График 2: Температурная карта и зоны нагрева (с процентом)
+# График 2: Температурная карта и зоны нагрева
 plt.figure(figsize=(14, 6))
 
 T_final = T[:, :, -1]
 T_min = np.percentile(T_final, 1)
 T_max = np.percentile(T_final, 99)
 
-# Левый график - температурная карта
 plt.subplot(1, 2, 1)
 im_temp = plt.imshow(T_final.T, origin='lower', extent=[0, square_side, 0, square_side],
                      aspect='equal', cmap='hot', vmin=T_min, vmax=T_max)
@@ -219,7 +197,6 @@ plt.xlabel('y, м')
 plt.ylabel('z, м')
 plt.title(f'Температура в конце (t={total_time:.0f} с)')
 
-# Правый график - зоны нагрева
 plt.subplot(1, 2, 2)
 heated_above_310 = (T_final > 310) & (~heater_mask)
 display_mask = np.zeros((Ny, Nz))
@@ -236,14 +213,13 @@ plt.colorbar(im_zones, ticks=[0.25, 1, 2], label='Зона',
 plt.xlabel('y, м')
 plt.ylabel('z, м')
 
-# Добавляем процент полезной площади на правый график
 final_percent = percent_heated_over_time[-1] if percent_heated_over_time else 0
 plt.title(f'Зоны нагрева выше 310K\nПолезная площадь нагрева: {final_percent:.1f}%')
 
 plt.tight_layout()
 plt.show()
 
-# График 3: Изменение температуры во времени
+# График 3: Изменение температуры
 plt.figure(figsize=(12, 6))
 
 center_y_idx = Ny // 2
@@ -258,39 +234,29 @@ else:
 
 temp_edge = T[0, 0, :]
 
-plt.plot(time, temp_center, linewidth=2, label='Центр стержня')
+plt.plot(time, temp_center, linewidth=2, label='Центр стержня (среда)')
 plt.plot(time, temp_heater, linewidth=2, label='Внутри нагревателя')
 plt.plot(time, temp_edge, linewidth=2, label='Край стержня (угол)')
 plt.axhline(y=310, color='r', linestyle='--', linewidth=1, label='Порог 310 K')
-plt.axhline(y=T_boil, color='b', linestyle='--', linewidth=1, label='Кипение воды')
 plt.xlabel('Время t, с')
 plt.ylabel('Температура T, К')
-plt.title(f'Прямоугольный нагреватель (mix={mix_factor}) | Полезная площадь: {final_percent:.1f}%')
+plt.title(f'Прямоугольный нагреватель | Полезная площадь: {final_percent:.1f}%')
 plt.legend(loc='upper left')
 plt.grid(True)
 plt.show()
 
-# График 4: Динамика процента полезной площади
+# График 4: Динамика процента
 plt.figure(figsize=(12, 6))
 time_points = time[1:]
 plt.plot(time_points, percent_heated_over_time, linewidth=2, color='green')
 plt.xlabel('Время t, с')
 plt.ylabel('Площадь нагрева выше 310K, %')
-plt.title(f'Динамика полезной площади нагрева (прямоугольный нагреватель)\nИтог: {final_percent:.1f}%')
+plt.title(f'Динамика полезной площади нагрева\nИтог: {final_percent:.1f}%')
 plt.grid(True)
 plt.ylim(bottom=0)
 plt.show()
 
-# ============ ПОДСЧЕТ ============
-heated_area = np.sum(heated_above_310) * dy * dz
-heater_area = np.sum(heater_mask) * dy * dz
-area_outside = 1.0 - heater_area
-
 print(f"\n=== РЕЗУЛЬТАТЫ ===")
-print(f"Площадь нагревателя: {heater_area:.4f} м²")
-print(f"Площадь, нагретая выше 310K: {heated_area:.4f} м²")
+print(f"Мощность нагревателя: {Q_heater/1e6:.0f} МВт/м³")
 print(f"Процент нагретой площади: {final_percent:.1f}%")
-
-water_initial = np.sum(has_water)
-water_final = np.sum(~water_evaporated & has_water)
-print(f"Испарилось воды: {water_initial - water_final} из {water_initial} ячеек")
+print(f"Максимальная температура: {np.max(T_final):.1f} K ({np.max(T_final)-273.1:.0f}°C)")

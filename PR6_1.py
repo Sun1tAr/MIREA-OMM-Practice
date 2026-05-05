@@ -17,10 +17,20 @@ materials = {
 # ============ ПАРАМЕТРЫ ЗАДАЧИ ============
 mass_fractions = {'C': 0.4, 'SiO2': 0.5, 'H2O': 0.1}
 
-# Параметры прямоугольного нагревателя
-width_y = 0.3      # м
-width_z = 0.4      # м
-Q_heater = 1e6     # Вт/м³
+# Параметры исходного прямоугольного нагревателя (для расчёта площади)
+orig_width_y, orig_width_z = 0.3, 0.4
+orig_area = orig_width_y * orig_width_z
+
+# Три круглых нагревателя
+num_heaters = 3
+single_area = orig_area / num_heaters
+heater_radius = np.sqrt(single_area / np.pi)
+Q_heater = 1e6
+
+# Параметры расположения
+R_heaters = 0.35        # расстояние от центра до центров нагревателей
+angles_deg = [0, 120, 240]
+angles_rad = np.deg2rad(angles_deg)
 
 # ============ ПАРАМЕТРЫ СЕТКИ (ПОДОБРАНЫ ДЛЯ УСТОЙЧИВОСТИ) ============
 total_time = 6000    # с
@@ -32,7 +42,10 @@ dy = square_side / (Ny - 1)
 dz = square_side / (Nz - 1)
 dt = total_time / Nt
 
-print("=== ПРЯМОУГОЛЬНЫЙ НАГРЕВАТЕЛЬ В НЕОДНОРОДНОЙ СРЕДЕ ===")
+print("=== ТРИ КРУГЛЫХ НАГРЕВАТЕЛЯ В НЕОДНОРОДНОЙ СРЕДЕ ===")
+print(f"Радиус нагревателя: {heater_radius:.4f} м")
+print(f"Расстояние от центра: R = {R_heaters} м")
+print(f"Углы: {angles_deg}°")
 print(f"dy = {dy:.5f} м, dz = {dz:.5f} м")
 print(f"dt = {dt:.4f} с, Nt = {Nt}")
 print(f"Общее время: {total_time} с")
@@ -111,15 +124,19 @@ rho_map[rho_map == 0] = materials[order[0]]['rho']
 cp_map[cp_map == 0] = materials[order[0]]['cp']
 lambda_map[lambda_map == 0] = materials[order[0]]['lambda']
 
-# ============ ПРЯМОУГОЛЬНЫЙ НАГРЕВАТЕЛЬ ============
+# ============ ТРИ КРУГЛЫХ НАГРЕВАТЕЛЯ ============
 center_y = square_side / 2
 center_z = square_side / 2
 y_coords = np.linspace(0, square_side, Ny)
 z_coords = np.linspace(0, square_side, Nz)
 Y, Z = np.meshgrid(y_coords, z_coords, indexing='ij')
 
-heater_mask = (Y >= center_y - width_y/2) & (Y <= center_y + width_y/2) & \
-              (Z >= center_z - width_z/2) & (Z <= center_z + width_z/2)
+heater_mask = np.zeros((Ny, Nz), dtype=bool)
+for angle_rad in angles_rad:
+    hc_y = center_y + R_heaters * np.sin(angle_rad)
+    hc_z = center_z + R_heaters * np.cos(angle_rad)
+    circle_mask = (Y - hc_y)**2 + (Z - hc_z)**2 <= heater_radius**2
+    heater_mask = heater_mask | circle_mask
 
 # ============ ПАРАМЕТРЫ РАСЧЕТА ============
 source_val = dt * Q_heater / (rho_map * cp_map + epsilon)
@@ -203,7 +220,19 @@ plt.ylabel('z, м')
 plt.title(f'Распределение компонентов (mix={mix_factor})')
 plt.show()
 
-# График 2: Температурная карта и зоны нагрева (с процентом)
+# График 2: Расположение нагревателей
+plt.figure(figsize=(8, 8))
+heaters_display = np.zeros((Ny, Nz))
+heaters_display[heater_mask] = 1
+plt.imshow(heaters_display.T, origin='lower', extent=[0, square_side, 0, square_side],
+           aspect='equal', cmap='Reds', alpha=0.7)
+plt.colorbar(label='Нагреватель')
+plt.xlabel('y, м')
+plt.ylabel('z, м')
+plt.title(f'Три круглых нагревателя (R={R_heaters} м, r={heater_radius:.3f} м)')
+plt.show()
+
+# График 3: Температурная карта и зоны нагрева (с процентом)
 plt.figure(figsize=(14, 6))
 
 T_final = T[:, :, -1]
@@ -243,7 +272,7 @@ plt.title(f'Зоны нагрева выше 310K\nПолезная площад
 plt.tight_layout()
 plt.show()
 
-# График 3: Изменение температуры во времени
+# График 4: Изменение температуры во времени
 plt.figure(figsize=(12, 6))
 
 center_y_idx = Ny // 2
@@ -265,18 +294,18 @@ plt.axhline(y=310, color='r', linestyle='--', linewidth=1, label='Порог 310
 plt.axhline(y=T_boil, color='b', linestyle='--', linewidth=1, label='Кипение воды')
 plt.xlabel('Время t, с')
 plt.ylabel('Температура T, К')
-plt.title(f'Прямоугольный нагреватель (mix={mix_factor}) | Полезная площадь: {final_percent:.1f}%')
+plt.title(f'Три круглых нагревателя (mix={mix_factor}) | Полезная площадь: {final_percent:.1f}%')
 plt.legend(loc='upper left')
 plt.grid(True)
 plt.show()
 
-# График 4: Динамика процента полезной площади
+# График 5: Динамика процента полезной площади
 plt.figure(figsize=(12, 6))
 time_points = time[1:]
 plt.plot(time_points, percent_heated_over_time, linewidth=2, color='green')
 plt.xlabel('Время t, с')
 plt.ylabel('Площадь нагрева выше 310K, %')
-plt.title(f'Динамика полезной площади нагрева (прямоугольный нагреватель)\nИтог: {final_percent:.1f}%')
+plt.title(f'Динамика полезной площади нагрева (три круглых нагревателя)\nИтог: {final_percent:.1f}%')
 plt.grid(True)
 plt.ylim(bottom=0)
 plt.show()
@@ -287,7 +316,7 @@ heater_area = np.sum(heater_mask) * dy * dz
 area_outside = 1.0 - heater_area
 
 print(f"\n=== РЕЗУЛЬТАТЫ ===")
-print(f"Площадь нагревателя: {heater_area:.4f} м²")
+print(f"Суммарная площадь нагревателей: {heater_area:.4f} м²")
 print(f"Площадь, нагретая выше 310K: {heated_area:.4f} м²")
 print(f"Процент нагретой площади: {final_percent:.1f}%")
 
